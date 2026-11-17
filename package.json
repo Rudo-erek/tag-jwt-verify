@@ -1,0 +1,11 @@
+{
+  "name": "tag-jwt-verify",
+  "version": "0.1.0",
+  "description": "Local RS256 JWT identity verification with JWKS or PEM public keys",
+  "type": "module",
+  "bin": { "tag-jwt-verify": "bin/tag-jwt-verify.mjs" },
+  "engines": { "node": ">=20" },
+  "files": ["bin/", "lib/", "README.md"],
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "license": "UNLICENSED"
+}
