@@ -95,6 +95,8 @@ test('JWKS fetch uses configured HTTPS endpoint without forwarding JWT', async (
     calls++;
     assert.equal(url.href, 'https://keys.example.com/jwks.json');
     assert.equal(options.redirect, 'error');
+    assert.equal(options.headers['x-use-ppe'], '1');
+    assert.equal(options.headers['X-TT-ENV'], 'ppe_tag_jwt_identity');
     assert.equal(options.headers.authorization, undefined);
     assert.equal(options.body, undefined);
     return new Response(JSON.stringify({ keys: [jwk] }));
@@ -149,5 +151,5 @@ test('CLI reads env/stdin, emits JSON and never echoes a rejected JWT', async (t
   assert.equal(invoke([...flags, '--public-key', 'key.pem']).status, 2);
   assert.equal(invoke([...flags, '--clock-tolerance', '']).status, 2);
   assert.equal(invoke(['--help']).status, 0);
-  assert.equal(invoke(['--version']).stdout.trim(), '0.1.0');
+  assert.equal(invoke(['--version']).stdout.trim(), '0.1.1');
 });

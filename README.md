@@ -7,7 +7,7 @@
 从发布页复制安装包 HTTPS 地址：
 
 ```sh
-npm install -g '<发布页提供的 tag-jwt-verify-0.1.0.tgz 地址>'
+npm install -g '<发布页提供的 tag-jwt-verify-0.1.1.tgz 地址>'
 tag-jwt-verify --aud '插件唯一标识/连接器唯一标识'
 ```
 
@@ -34,6 +34,9 @@ tag-jwt-verify --aud 'expected-audience' --issuer 'https://issuer.example.com' \
 默认签发方为 `https://tag.feishu.cn`，默认 JWKS 地址为
 `https://ai.feishu.cn/v1/openapi/federation/jwks.json`。
 请与平台返回的校验信息核对，不能从待验证 JWT 自报的 `iss`、`jku` 或 `jwk` 建立信任。
+此测试版本的所有 JWKS HTTP 请求默认携带 `x-use-ppe: 1` 和
+`X-TT-ENV: ppe_tag_jwt_identity`，用于访问 PPE 泳道；自定义 `--jwks-url` 同样携带这两个请求头。
+本地公钥和本地 JWKS 校验不受影响。
 JWKS 只接受 HTTPS，不跟随重定向；每次运行重新拉取，不缓存公钥。
 `--jwks-file` 可指定事先通过可信渠道取得的本地 JWKS。
 
