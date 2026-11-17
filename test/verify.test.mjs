@@ -13,7 +13,7 @@ const jwk = { ...pair.publicKey.export({ format: 'jwk' }), kid: 'fixture-key', a
 const audience = 'example_plugin/example_connector';
 const header = { alg: 'RS256', typ: 'tag-identity+jwt', kid: jwk.kid };
 const now = Math.floor(Date.now() / 1000);
-const baseClaims = { iss: DEFAULT_ISSUER, aud: audience, sub: 'urn:test:agent', iat: now, nbf: now - 60, exp: now + 300, jti: 'fixture', lark_user_id: 'fixture-user' };
+const baseClaims = { iss: 'https://ai.feishu.cn', aud: audience, sub: 'urn:test:agent', iat: now, nbf: now - 60, exp: now + 300, jti: 'fixture', lark_user_id: 'fixture-user' };
 
 function token(claims = baseClaims, tokenHeader = header, privateKey = pair.privateKey) {
   const input = [tokenHeader, claims].map((value) => Buffer.from(JSON.stringify(value)).toString('base64url')).join('.');
@@ -30,6 +30,7 @@ async function fixture(t, keys = [jwk]) {
 
 test('verify a signed identity and preserve verified claims', async (t) => {
   const { options } = await fixture(t);
+  assert.equal(DEFAULT_ISSUER, 'https://ai.feishu.cn');
   const result = await verifyJWT(token(), options);
   assert.deepEqual(result.claims, baseClaims);
   await verifyJWT(token({ ...baseClaims, aud: ['other', audience] }), options);
@@ -41,6 +42,7 @@ test('reject invalid signatures, claims and header confusion', async (t) => {
   const wrongPair = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const cases = [
     ['wrong key', token(baseClaims, header, wrongPair.privateKey), {}, 'SIGNATURE_INVALID'],
+    ['previous default issuer', token({ ...baseClaims, iss: 'https://tag.feishu.cn' }), {}, 'ISSUER_MISMATCH'],
     ['wrong issuer', token({ ...baseClaims, iss: 'https://attacker.invalid' }), {}, 'ISSUER_MISMATCH'],
     ['wrong audience', token({ ...baseClaims, aud: 'other' }), {}, 'AUDIENCE_MISMATCH'],
     ['mixed audience types', token({ ...baseClaims, aud: [audience, 7] }), {}, 'AUDIENCE_MISMATCH'],
@@ -151,5 +153,5 @@ test('CLI reads env/stdin, emits JSON and never echoes a rejected JWT', async (t
   assert.equal(invoke([...flags, '--public-key', 'key.pem']).status, 2);
   assert.equal(invoke([...flags, '--clock-tolerance', '']).status, 2);
   assert.equal(invoke(['--help']).status, 0);
-  assert.equal(invoke(['--version']).stdout.trim(), '0.1.1');
+  assert.equal(invoke(['--version']).stdout.trim(), '0.1.2');
 });

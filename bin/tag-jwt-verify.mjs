@@ -2,7 +2,7 @@
 import { parseArgs } from 'node:util';
 import { DEFAULT_ISSUER, DEFAULT_JWKS, MAX_TOKEN_BYTES, readLimited, VerificationError, verifyJWT } from '../lib/verify.mjs';
 
-const help = `tag-jwt-verify 0.1.1 — Verify JWT identity locally (Node.js 20+)
+const help = `tag-jwt-verify 0.1.2 — Verify JWT identity locally (Node.js 20+)
 
 Usage: tag-jwt-verify --aud <expected-audience> [options]
 
@@ -39,7 +39,7 @@ async function main() {
     }, allowPositionals: false, strict: true }).values;
   } catch { throw new VerificationError('INVALID_ARGUMENTS', 'Invalid arguments. See --help. Do not put JWTs in arguments.', 2); }
   if (args.help) { console.log(help); return; }
-  if (args.version) { console.log('0.1.1'); return; }
+  if (args.version) { console.log('0.1.2'); return; }
   if (!args.aud || ['issuer', 'type', 'subject', 'jwks-url', 'jwks-file', 'public-key', 'timeout', 'clock-tolerance']
     .some((name) => args[name] !== undefined && !args[name].trim())) {
     throw new VerificationError('INVALID_ARGUMENTS', '--aud is required; option values must not be empty. See --help.', 2);

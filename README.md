@@ -7,7 +7,7 @@
 从发布页复制安装包 HTTPS 地址：
 
 ```sh
-npm install -g '<发布页提供的 tag-jwt-verify-0.1.1.tgz 地址>'
+npm install -g '<发布页提供的 tag-jwt-verify-0.1.2.tgz 地址>'
 tag-jwt-verify --aud '插件唯一标识/连接器唯一标识'
 ```
 
@@ -24,14 +24,14 @@ tag-jwt-verify --aud 'example_plugin/example_connector' --stdin < token.jwt
 
 # 校验指定 Agent 身份并显式展示已验证的身份声明。
 tag-jwt-verify --aud 'example_plugin/example_connector' \
-  --subject 'wimse://tag.feishu.cn/tenant/<tenant>/agent/<agent>' --show-claims
+  --subject 'wimse://ai.feishu.cn/tenant/<tenant>/agent/<agent>' --show-claims
 
 # 使用企业自己可信的 JWKS 和签发方。
 tag-jwt-verify --aud 'expected-audience' --issuer 'https://issuer.example.com' \
   --jwks-url 'https://issuer.example.com/jwks.json' --type 'JWT'
 ```
 
-默认签发方为 `https://tag.feishu.cn`，默认 JWKS 地址为
+默认签发方为 `https://ai.feishu.cn`，默认 JWKS 地址为
 `https://ai.feishu.cn/v1/openapi/federation/jwks.json`。
 请与平台返回的校验信息核对，不能从待验证 JWT 自报的 `iss`、`jku` 或 `jwk` 建立信任。
 此测试版本的所有 JWKS HTTP 请求默认携带 `x-use-ppe: 1` 和
