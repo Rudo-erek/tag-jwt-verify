@@ -15,15 +15,15 @@ install_tag_jwt() (
 
   install_tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/tag-jwt-install.XXXXXXXX")"
   trap 'rm -rf -- "$install_tmpdir"' EXIT
-  archive="$install_tmpdir/tag-jwt-verify-0.1.2.tgz"
+  archive="$install_tmpdir/tag-jwt-verify-0.2.0.tgz"
   curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 \
-    'https://github.com/Rudo-erek/tag-jwt-verify/releases/download/v0.1.2/tag-jwt-verify-0.1.2.tgz' -o "$archive"
+    'https://github.com/Rudo-erek/tag-jwt-verify/releases/download/v0.2.0/tag-jwt-verify-0.2.0.tgz' -o "$archive"
 
   node -e '
     const fs = require("node:fs");
     const crypto = require("node:crypto");
     const digest = crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex");
-    if (digest !== "64f87a23837cf095f1f36af1dfe17f44f40fb7a3577e48d8162a921831a0b216") {
+    if (digest !== "b1c480dad02bb687f28b6043e86c313418f2ea291e55cef51c914bc625b82887") {
       console.error("安装失败：安装包 SHA-256 不匹配，已停止安装。");
       process.exit(1);
     }

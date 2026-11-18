@@ -1,12 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_ISSUER, verifyJWT } from '../lib/verify.mjs';
+import {
+  DEFAULT_ISSUER,
+  VERSION,
+  generateMockBundle,
+  inspectEnvToken,
+  inspectJWKS,
+  parseJWT,
+  runSelfTest,
+  verifyJWT,
+} from '../lib/verify.mjs';
 
 const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...pair.publicKey.export({ format: 'jwk' }), kid: 'fixture-key', alg: 'RS256', use: 'sig' };
@@ -14,10 +23,22 @@ const audience = 'example_plugin/example_connector';
 const header = { alg: 'RS256', typ: 'tag-identity+jwt', kid: jwk.kid };
 const now = Math.floor(Date.now() / 1000);
 const baseClaims = { iss: 'https://ai.feishu.cn', aud: audience, sub: 'urn:test:agent', iat: now, nbf: now - 60, exp: now + 300, jti: 'fixture', lark_user_id: 'fixture-user' };
+const bin = fileURLToPath(new URL('../bin/tag-jwt-verify.mjs', import.meta.url));
 
 function token(claims = baseClaims, tokenHeader = header, privateKey = pair.privateKey) {
   const input = [tokenHeader, claims].map((value) => Buffer.from(JSON.stringify(value)).toString('base64url')).join('.');
   return `${input}.${sign('RSA-SHA256', Buffer.from(input), privateKey).toString('base64url')}`;
+}
+
+function invokeCli(args, envValue = token(), stdin) {
+  const env = { PATH: process.env.PATH };
+  if (envValue !== null) env.TAG_IDENTITY = envValue;
+  return spawnSync(process.execPath, [bin, ...args], {
+    encoding: 'utf8',
+    timeout: 10000,
+    env,
+    input: stdin,
+  });
 }
 
 async function fixture(t, keys = [jwk]) {
@@ -91,25 +112,28 @@ test('PEM and JWK trust boundaries', async (t) => {
   await assert.rejects(verifyJWT(token(baseClaims, header, weak.privateKey), options), { code: 'INVALID_PUBLIC_KEY' });
 });
 
-test('JWKS fetch uses configured HTTPS endpoint without forwarding JWT', async (t) => {
-  let calls = 0;
+test('JWKS fetch uses configured HTTPS endpoint without forwarding JWT and supports --no-ppe', async (t) => {
+  const seenHeaders = [];
   t.mock.method(globalThis, 'fetch', async (url, options) => {
-    calls++;
+    seenHeaders.push(options.headers);
     assert.equal(url.href, 'https://keys.example.com/jwks.json');
     assert.equal(options.redirect, 'error');
-    assert.equal(options.headers['x-use-ppe'], '1');
-    assert.equal(options.headers['X-TT-ENV'], 'ppe_tag_jwt_identity');
     assert.equal(options.headers.authorization, undefined);
     assert.equal(options.body, undefined);
     return new Response(JSON.stringify({ keys: [jwk] }));
   });
   const injected = { ...header, jku: 'https://attacker.invalid/jwks', x5u: 'https://attacker.invalid/cert', jwk: {} };
   await verifyJWT(token(baseClaims, injected), { audience, jwksUrl: 'https://keys.example.com/jwks.json' });
-  assert.equal(calls, 1);
+  assert.equal(seenHeaders[0]['x-use-ppe'], '1');
+  assert.equal(seenHeaders[0]['X-TT-ENV'], 'ppe_tag_jwt_identity');
+
+  await inspectJWKS({ jwksUrl: 'https://keys.example.com/jwks.json', usePpe: false, kid: jwk.kid });
+  assert.equal(seenHeaders[1]['x-use-ppe'], undefined);
+  assert.equal(seenHeaders[1]['X-TT-ENV'], undefined);
+
   for (const jwksUrl of ['http://keys.example.com/jwks', 'https://user:secret@keys.example.com/jwks']) {
     await assert.rejects(verifyJWT(token(), { audience, jwksUrl }), { code: 'INVALID_JWKS_URL' });
   }
-  assert.equal(calls, 1);
 });
 
 test('JWKS rejects network errors, HTTP errors, malformed and oversized responses', async (t) => {
@@ -126,32 +150,144 @@ test('JWKS rejects network errors, HTTP errors, malformed and oversized response
   }
 });
 
-test('CLI reads env/stdin, emits JSON and never echoes a rejected JWT', async (t) => {
+test('CLI verify (default and subcommand), version, and secret non-echo guarantees', async (t) => {
   const { options } = await fixture(t);
-  const bin = fileURLToPath(new URL('../bin/tag-jwt-verify.mjs', import.meta.url));
-  const invoke = (args, value = token(), stdin) => spawnSync(process.execPath, [bin, ...args], {
-    encoding: 'utf8', timeout: 10000, env: { PATH: process.env.PATH, TAG_IDENTITY: value }, input: stdin,
-  });
   const flags = ['--aud', audience, '--jwks-file', options.jwksFile];
-  let result = invoke(flags);
+  let result = invokeCli(flags);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).verified, true);
   assert.equal(JSON.parse(result.stdout).claims, undefined);
-  result = invoke([...flags, '--show-claims']);
-  assert.equal(JSON.parse(result.stdout).claims.lark_user_id, 'fixture-user');
-  result = invoke([...flags, '--stdin'], 'invalid-env-token', token());
+
+  result = invokeCli(['verify', ...flags, '--show-claims']);
   assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).claims.lark_user_id, 'fixture-user');
+
+  result = invokeCli([...flags, '--stdin'], 'invalid-env-token', token());
+  assert.equal(result.status, 0, result.stderr);
+
   const invalid = 'not-a-token-secret';
-  result = invoke(flags, invalid);
+  result = invokeCli(flags, invalid);
   assert.equal(result.status, 1);
   assert.equal(result.stdout, '');
   assert.equal(result.stderr.includes(invalid), false);
-  result = invoke(['--token', invalid]);
+
+  result = invokeCli(['--token', invalid]);
   assert.equal(result.status, 2);
   assert.equal(result.stderr.includes(invalid), false);
-  assert.equal(invoke([]).status, 2);
-  assert.equal(invoke([...flags, '--public-key', 'key.pem']).status, 2);
-  assert.equal(invoke([...flags, '--clock-tolerance', '']).status, 2);
-  assert.equal(invoke(['--help']).status, 0);
-  assert.equal(invoke(['--version']).stdout.trim(), '0.1.2');
+
+  result = invokeCli([invalid]);
+  assert.equal(result.status, 2);
+  assert.equal(result.stderr.includes(invalid), false);
+
+  assert.equal(invokeCli([]).status, 2);
+  assert.equal(invokeCli([...flags, '--public-key', 'key.pem']).status, 2);
+  assert.equal(invokeCli([...flags, '--clock-tolerance', '']).status, 2);
+  assert.equal(invokeCli(['--version']).stdout.trim(), VERSION);
+  assert.equal(invokeCli(['version']).stdout.trim(), VERSION);
+});
+
+test('CLI help command lists purpose, subcommands, and per-command details', () => {
+  for (const args of [['help'], ['--help'], ['-h']]) {
+    const res = invokeCli(args, null);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /用途/);
+    for (const cmd of ['verify', 'parse', 'env', 'jwks', 'mock', 'selftest', 'version']) {
+      assert.ok(res.stdout.includes(cmd), `Expected help output to list ${cmd}`);
+    }
+  }
+  for (const sub of ['verify', 'parse', 'decode', 'env', 'jwks', 'mock', 'selftest', 'version']) {
+    const res = invokeCli(['help', sub], null);
+    assert.equal(res.status, 0, res.stderr);
+    assert.ok(res.stdout.length > 40);
+  }
+  const secretTopic = 'eyJhbGciOiJSUzI1NiJ9.secret';
+  const bad = invokeCli(['help', secretTopic], null);
+  assert.equal(bad.status, 2);
+  assert.equal(bad.stderr.includes(secretTopic), false);
+});
+
+test('CLI parse / decode command returns header, claims, and timing without verifying signature', () => {
+  const expiredWrongIss = token({ ...baseClaims, iss: 'https://other.example', exp: now - 120 });
+  for (const sub of ['parse', 'decode']) {
+    const res = invokeCli([sub], expiredWrongIss);
+    assert.equal(res.status, 0, res.stderr);
+    const body = JSON.parse(res.stdout);
+    assert.equal(body.verified, false);
+    assert.deepEqual(body.header, header);
+    assert.equal(body.claims.iss, 'https://other.example');
+    assert.equal(body.claims.lark_user_id, 'fixture-user');
+    assert.equal(body.timing.expired, true);
+    assert.ok(body.timing.ttl_seconds <= -120);
+  }
+
+  const claimsOnly = invokeCli(['parse', '--part', 'claims'], token());
+  assert.equal(claimsOnly.status, 0, claimsOnly.stderr);
+  assert.deepEqual(JSON.parse(claimsOnly.stdout), baseClaims);
+
+  const headerOnly = invokeCli(['parse', '--part', 'header', '--stdin'], null, token());
+  assert.equal(headerOnly.status, 0, headerOnly.stderr);
+  assert.deepEqual(JSON.parse(headerOnly.stdout), header);
+
+  const missing = invokeCli(['parse'], '');
+  assert.equal(missing.status, 2);
+
+  const secretMalformed = 'malformed-raw-secret-token';
+  const bad = invokeCli(['parse'], secretMalformed);
+  assert.equal(bad.status, 1);
+  assert.equal(bad.stderr.includes(secretMalformed), false);
+});
+
+test('CLI env, jwks, mock, and selftest diagnostic commands', async (t) => {
+  const { dir, options } = await fixture(t);
+
+  // env command
+  const rawJwt = token();
+  let res = invokeCli(['env'], rawJwt);
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(res.stdout.includes(rawJwt), false);
+  const envReport = JSON.parse(res.stdout);
+  assert.equal(envReport.well_formed_jwt, true);
+  assert.equal(envReport.summary.kid, jwk.kid);
+  assert.equal(envReport.summary.aud, audience);
+
+  assert.equal(invokeCli(['env'], null).status, 2);
+  assert.equal(invokeCli(['env', '--allow-missing'], null).status, 0);
+  const badSecret = 'bad-jwt-secret-value';
+  const badEnv = invokeCli(['env'], badSecret);
+  assert.equal(badEnv.status, 1);
+  assert.equal(badEnv.stdout.includes(badSecret), false);
+
+  // jwks command
+  res = invokeCli(['jwks', '--jwks-file', options.jwksFile, '--from-env'], rawJwt);
+  assert.equal(res.status, 0, res.stderr);
+  const jwksReport = JSON.parse(res.stdout);
+  assert.equal(jwksReport.ok, true);
+  assert.equal(jwksReport.kid_matched, true);
+  assert.equal(jwksReport.keys[0].modulus_bits, 2048);
+
+  res = invokeCli(['jwks', '--jwks-file', options.jwksFile, '--kid', 'non-existent-kid'], null);
+  assert.equal(res.status, 1);
+  assert.equal(JSON.parse(res.stdout).kid_matched, false);
+
+  // mock command (--out-dir + end-to-end verify & parse)
+  const mockDir = join(dir, 'mock-out');
+  res = invokeCli(['mock', '--aud', 'demo_plugin/demo_conn', '--out-dir', mockDir], null);
+  assert.equal(res.status, 0, res.stderr);
+  const mockMeta = JSON.parse(res.stdout);
+  const mockJwt = (await readFile(mockMeta.files.token, 'utf8')).trim();
+  const verifyMock = invokeCli(['verify', '--aud', 'demo_plugin/demo_conn', '--jwks-file', mockMeta.files.jwks], mockJwt);
+  assert.equal(verifyMock.status, 0, verifyMock.stderr);
+  assert.equal(JSON.parse(verifyMock.stdout).verified, true);
+
+  const expiredMock = generateMockBundle({ audience: 'demo_plugin/demo_conn', expired: true });
+  assert.equal(parseJWT(expiredMock.token).timing.expired, true);
+  assert.equal(inspectEnvToken(expiredMock.token).summary.timing.expired, true);
+
+  // selftest command
+  const selfRes = await runSelfTest();
+  assert.equal(selfRes.ok, true);
+  assert.equal(selfRes.passed, 5);
+  res = invokeCli(['selftest'], null);
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(JSON.parse(res.stdout).ok, true);
 });
